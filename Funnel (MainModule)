@@ -12,10 +12,10 @@ funnelClass.__index = funnelClass
 function funnelClass.new(attachment0: Attachment, attachment1: Attachment, speed)
 	local self = setmetatable({}, funnelClass)
 	
-	self.Attachment0 = attachment0 --read only
-	self.Attachment1 = attachment1 --read only
-	self.Speed = speed or 5 --read only
-	self.Reversed = false --read only
+	self.Attachment0 = attachment0
+	self.Attachment1 = attachment1
+	self.Speed = speed or 5 -- Change 5 to whatever you want to be the funnel speed
+	self.Reversed = false
 	
 	self:_setup()
 	
@@ -44,8 +44,8 @@ function funnelClass:_setup()
 	newFunnelPart.Transparency = 1
 	newFunnelPart.CastShadow = false
 	newFunnelPart.Shape = Enum.PartType.Cylinder
-	newFunnelPart.Size = Vector3.new(attDistance, FUNNEL_SIZE, FUNNEL_SIZE) --Get the distance from att0 and att1 and set it as the part's size
-	newFunnelPart.CFrame = CFrame.lookAt((pAtt0 + pAtt1)/2, pAtt1) * CFrame.Angles(0, math.rad(90), 0) --Set the part's position to the midpoint between att0 and att1 and make it look at att1
+	newFunnelPart.Size = Vector3.new(attDistance, FUNNEL_SIZE, FUNNEL_SIZE) -- Get the distance from attachment0 and attachment1 and set it as the part's size
+	newFunnelPart.CFrame = CFrame.lookAt((pAtt0 + pAtt1)/2, pAtt1) * CFrame.Angles(0, math.rad(90), 0) -- Set the part's position to the midpoint between attachment0 and att1 and make it face attachment1
 	newFunnelPart.Parent = workspace
 	
 	newFunnelPart:SetAttribute("StartPoint", self.Attachment0.WorldPosition)
