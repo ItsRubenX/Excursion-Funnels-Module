@@ -1,0 +1,232 @@
+local collectionService = game:GetService("CollectionService")
+local runService = game:GetService("RunService")
+local players = game:GetService("Players")
+local userInputService = game:GetService("UserInputService")
+local tweenService = game:GetService("TweenService")
+local debris = game:GetService("Debris")
+
+local player = players.LocalPlayer
+local camera = workspace.CurrentCamera
+
+local controlModule = require(player:WaitForChild("PlayerScripts"):WaitForChild("PlayerModule"):WaitForChild("ControlModule"))
+
+local FUNNEL_TAG_NAME = "FUNNEL"
+local FUNNEL_DEBOUNCE_TIME = .25
+local FUNNEL_SOUND = "rbxassetid://9116386093"
+
+local ENTER_FUNNEL_TWEENINFO = TweenInfo.new(1, Enum.EasingStyle.Sine)
+local SOUND_TWEENINFO_IN = TweenInfo.new(.5, Enum.EasingStyle.Sine)
+local SOUND_TWEENINFO_OUT = TweenInfo.new(.5, Enum.EasingStyle.Sine, Enum.EasingDirection.In)
+
+local osClock, vector3New, cLookAt = os.clock, Vector3.new, CFrame.lookAt --localize functions since we are going to be calling theses a lot
+
+local controller = {}
+controller.IsOnFunnel = false
+controller.FunnelParts = {}
+controller.OverlapParams = OverlapParams.new()
+controller._lastFunnelClock = os.clock()
+controller._funnelConveyorClock = os.clock()
+
+local function GetRayClosestPoint(startPoint, direction, point) --by @ozzyDrive on scriptinghelpers.org (i'm bad at math)
+	--  shift point to be relative to the origin of the ray
+	local a, b = startPoint - point, direction
+	--  calculate rejection of a from b
+	local v = a - ((a:Dot(b)) / (b:Dot(b))) * b
+	--  add rejection to point to get the closest point on the ray
+	return point + v
+end
+
+function cardinalConvert(dir) --by @EncodedLua on the devforum. This is used to convert to Humanoid.MoveDirection to a more 2D based movement.
+	local angle = math.atan2(dir.X, -dir.Z)
+	local quarterTurn = math.pi / 2
+	angle = -math.round(angle / quarterTurn) * quarterTurn
+
+	local newX = -math.sin(angle)
+	local newZ = -math.cos(angle)
+	if math.abs(newX) <= 1e-10 then newX = 0 end
+	if math.abs(newZ) <= 1e-10 then newZ = 0 end
+	return Vector3.new(newX, 0, newZ)
+end
+
+function controller:EnterFunnel(funnelPart)
+	if os.clock() - self._lastFunnelClock < FUNNEL_DEBOUNCE_TIME then
+		return
+	end
+	
+	self.IsOnFunnel = true
+	
+	local startPoint = funnelPart:GetAttribute("StartPoint")
+	local endPoint = funnelPart:GetAttribute("EndPoint")
+	
+	self.CurrentFunnelPart = funnelPart
+	self._moveOffset = Vector3.new()
+	player.Character.Humanoid.AutoRotate = false
+	
+	local alignPosition = Instance.new("AlignPosition")
+	local att0 = Instance.new("Attachment")
+	local att1 = Instance.new("Attachment")
+	
+	alignPosition.MaxForce = math.huge
+	
+	att0.Parent = player.Character.HumanoidRootPart
+	att1.Parent = funnelPart
+	
+	self.FunnelOriginPoint = GetRayClosestPoint(startPoint, (startPoint - endPoint).Unit, player.Character.HumanoidRootPart.Position)
+	att1.WorldPosition = self.FunnelOriginPoint
+	
+	alignPosition.Attachment0 = att0
+	alignPosition.Attachment1 = att1
+	
+	alignPosition.Parent = player.Character.HumanoidRootPart
+	
+	self:StartSound()
+	
+	self.CurrentAlignPosition = alignPosition
+	self.CurrentAttachment0 = att0
+	self.CurrentAttachment1 = att1
+end
+
+function controller:ExitFunnel()
+	self.IsOnFunnel = false
+	self.CurrentFunnelPart = nil
+	self._lastFunnelClock = os.clock()
+	
+	if self.CurrentAlignPosition then
+		self.CurrentAlignPosition:Destroy()
+		self.CurrentAlignPosition = nil
+	end
+	
+	if self.CurrentAttachment0 then
+		self.CurrentAttachment0:Destroy()
+		self.CurrentAttachment0 = nil
+	end
+	
+	if self.CurrentAttachment1 then
+		self.CurrentAttachment1:Destroy()
+		self.CurrentAttachment1 = nil
+	end
+	
+	self:StopSound()
+	player.Character.Humanoid.AutoRotate = true
+end
+
+function controller:OnFunnelAdded(funnelPart)
+	table.insert(self.FunnelParts, funnelPart)
+	self.OverlapParams.FilterDescendantsInstances = self.FunnelParts
+end
+
+function controller:MoveAttachment()
+	local funnelPart = self.CurrentFunnelPart
+	
+	local moveVector = controlModule:GetMoveVector()
+	
+	local startPoint = self.CurrentFunnelPart:GetAttribute("StartPoint")
+	local endPoint = self.CurrentFunnelPart:GetAttribute("EndPoint")
+	local funnelSpeed = self.CurrentFunnelPart:GetAttribute("Speed")
+	local isReversed = self.CurrentFunnelPart:GetAttribute("Reversed")
+	
+	if moveVector.Magnitude > 0 then
+		local moveVector = controlModule:GetMoveVector()
+		local moveDirectionVector = vector3New(moveVector.X,  -moveVector.Z, 0)
+		
+		local lookPoint = endPoint
+		
+		if isReversed then
+			lookPoint = startPoint
+		end
+		
+		self._moveOffset = self._moveOffset + (cLookAt(self.FunnelOriginPoint, lookPoint):ToObjectSpace(camera.CFrame)):VectorToObjectSpace(moveDirectionVector)
+		self.CurrentAttachment1.WorldPosition = self.FunnelOriginPoint + self._moveOffset
+	else
+		self.CurrentAttachment1.WorldPosition = self.FunnelOriginPoint
+		self._moveOffset = vector3New()
+	end
+	
+	local direction = (startPoint - endPoint).Unit
+	
+	if not isReversed then
+		direction = -direction
+	end
+	
+	self.FunnelOriginPoint = self.FunnelOriginPoint + (direction * (osClock() - self._funnelConveyorClock) * funnelSpeed)
+end
+
+function controller:StartSound()
+	local sound = Instance.new("Sound")
+	sound.SoundId = FUNNEL_SOUND
+	sound.Looped = true
+	sound.Parent = self.CurrentFunnelPart
+	
+	local originalVolume = sound.Volume
+	
+	sound.Volume = 0
+	
+	local newTween = tweenService:Create(sound, SOUND_TWEENINFO_IN, {Volume = originalVolume})
+	
+	self.CurrentSound = sound
+	
+	sound:Play()
+	newTween:Play()
+end
+
+function controller:StopSound()
+	local sound = self.CurrentSound
+	
+	if sound then
+		local newTween = tweenService:Create(sound, SOUND_TWEENINFO_OUT, {Volume = 0})
+		newTween:Play()
+		debris:AddItem(sound, SOUND_TWEENINFO_OUT.Time + 1)
+	end
+end
+
+function controller:Init()
+	for _, funnelPart in pairs(collectionService:GetTagged(FUNNEL_TAG_NAME)) do
+		self:OnFunnelAdded(funnelPart)
+	end
+	
+	collectionService:GetInstanceAddedSignal(FUNNEL_TAG_NAME):Connect(function(...)
+		self:OnFunnelAdded(...)
+	end)
+	
+	player.CharacterAdded:Connect(function()
+		pcall(function() --pcall to silence error
+			self:ExitFunnel()
+		end)
+	end)
+	
+	runService.Heartbeat:Connect(function()
+		if self.CurrentFunnelPart then
+			local partsInside = workspace:GetPartsInPart(self.CurrentFunnelPart, self.OverlapParams)
+			local hasCharacterPartsInside = false
+			
+			for _, charPart in pairs(player.Character:GetChildren()) do
+				if table.find(partsInside, charPart) then
+					hasCharacterPartsInside = true
+					break
+				end
+			end
+			
+			if not hasCharacterPartsInside then
+				self:ExitFunnel()
+			end
+		else
+			for _, funnelPart in pairs(self.FunnelParts) do
+				for _, targetPart in pairs(workspace:GetPartsInPart(funnelPart, self.OverlapParams)) do
+					if targetPart.Parent == player.Character and not self.IsOnFunnel then
+						self:EnterFunnel(funnelPart)
+					end
+				end
+			end
+		end
+		
+		if player.Character and player.Character:FindFirstChild("Humanoid") and self.CurrentAttachment1 and self.CurrentFunnelPart then
+			self:MoveAttachment()
+		end
+		
+		self._funnelConveyorClock = osClock()
+	end)
+end
+
+controller:Init()
+
+return controller
